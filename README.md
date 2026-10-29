@@ -1,109 +1,176 @@
-# New Nx Repository
+## NestJS Microservices with TCP Transport
 
-<a alt="Nx logo" href="https://nx.dev" target="_blank" rel="noreferrer"><img src="https://raw.githubusercontent.com/nrwl/nx/master/images/nx-logo.png" width="45"></a>
+A hands-on project demonstrating TCP-based communication between `auth-service` and `order-service` using NestJS Microservices.
 
-✨ Your new, shiny [Nx workspace](https://nx.dev) is ready ✨.
+### Topics Covered
+- TCP Transport
+- `ClientProxy` and `ClientsModule`
+- `@MessagePattern()` and `@Payload()`
+- Request-response communication using `send()`
+- Inter-service user validation
 
-[Learn more about this workspace setup and its capabilities](https://nx.dev/docs/technologies/typescript/introduction?utm_source=nx_project&utm_medium=readme&utm_campaign=nx_projects) or run `npx nx graph` to visually explore what was created. Now, let's get you up to speed!
+[Nx Monorepo Setup](https://github.com/Omarmdwasimuddin/Nx-Monorepo-Setup)
 
-🚀 If you haven't connected to Nx Cloud yet, [complete your setup here](https://cloud.nx.app/get-started). Get faster builds with remote caching, distributed task execution, and self-healing CI. [See how your workspace can benefit](#nx-cloud).
+#### Install Microservices package
+```bash
+npm i @nestjs/microservices@^11
+```
+---
 
-## Generate a library
+#### `auth-service/src/main.ts`
+```ts
+import { NestFactory } from '@nestjs/core';
+import { AppModule } from './app/app.module';
+import { Transport, MicroserviceOptions } from '@nestjs/microservices';
 
-```sh
-npx nx g @nx/js:lib packages/pkg1 --publishable --importPath=@my-org/pkg1
+async function bootstrap() {
+  const app = await NestFactory.createMicroservice<MicroserviceOptions>(AppModule, {
+    transport: Transport.TCP,
+    options: {
+      host: '127.0.0.1',
+      port: 5005,
+
+    }
+  })
+    await app.listen();
+
+    console.log('Auth microservice is listening on port 5005');
+}
+
+bootstrap();
+```
+---
+
+#### `auth-service/src/app/app.controller.ts`
+```ts
+import { Controller } from '@nestjs/common';
+import { AppService } from './app.service';
+import { MessagePattern, Payload, RpcException } from '@nestjs/microservices';
+
+
+@Controller()
+export class AppController {
+  constructor(private readonly appService: AppService) {}
+
+  @MessagePattern({ cmd: 'validate_user' })
+  handleUserValidation(@Payload() data: any){
+
+    console.log('Auth service received data: ', data);
+
+    if(data.userId === 1){
+      return { status: 'success', user: {
+        id: 1, 
+        name: 'Wasim',
+      }}
+    }
+    // return { status: 'error', message: 'User not found!' };
+    throw new RpcException('User not found!') 
+  }
+}
+```
+---
+
+
+#### `order-service/src/app/app.module.ts`
+```ts
+import { Module } from '@nestjs/common';
+import { AppController } from './app.controller';
+import { AppService } from './app.service';
+
+import { Transport, ClientsModule } from '@nestjs/microservices';
+
+@Module({
+  imports: [
+    ClientsModule.register([
+      {
+        name: 'AUTH_SERVICE',
+      transport: Transport.TCP,
+      options: {
+        host: '127.0.0.1',
+        port: 5005,
+      }
+      }
+    ])
+  ],
+  controllers: [AppController],
+  providers: [AppService],
+})
+export class AppModule {}
+```
+---
+
+
+#### `order-service/src/app/app.controller.ts`
+```ts
+import { Controller, Inject, Get, Param } from '@nestjs/common';
+
+import { ClientProxy } from '@nestjs/microservices';
+import { firstValueFrom } from 'rxjs';
+
+@Controller('orders')
+export class AppController {
+  constructor(@Inject('AUTH_SERVICE') private readonly authService: ClientProxy) {} 
+
+  @Get(':id')
+  async createOrder(@Param('id') userId: string) {
+    const pattern = { cmd: 'validate_user' };
+    const payload = { userId: Number(userId) };
+    const authResponse = await firstValueFrom(this.authService.send(pattern, payload));
+
+    if(authResponse.status === 'success') {
+      return { 
+        message: 'User validated successfully!', 
+        user: authResponse.user, 
+      };
+    }
+    return {
+      message: 'User validation failed!',
+      error: authResponse.message,
+    }
+  }
+}
+```
+---
+
+
+#### `order-service/src/main.ts`
+```ts
+import { Logger } from '@nestjs/common';
+import { NestFactory } from '@nestjs/core';
+import { AppModule } from './app/app.module';
+
+async function bootstrap() {
+  const app = await NestFactory.create(AppModule);
+  const globalPrefix = 'api';
+  app.setGlobalPrefix(globalPrefix);
+  const port = process.env.PORT || 5003;
+  await app.listen(port);
+  Logger.log(
+    `🚀 Application is running on: http://localhost:${port}/${globalPrefix}`,
+  );
+}
+
+bootstrap();
+```
+---
+
+## Running the Services
+Start the Auth Service:
+```bash
+npx nx serve auth-service
+```
+Start the Order Service in a separate terminal:
+```bash
+npx nx serve order-service
+```
+---
+
+<img width="1543" height="340" alt="image" src="https://github.com/user-attachments/assets/b05ce1a4-9490-42f8-8ade-a48af27072a8" />
+
+```bash
+localhost:5003/api/orders/1
 ```
 
-## Run tasks
+<img width="396" height="207" alt="image" src="https://github.com/user-attachments/assets/9bcf3739-e8f2-4774-8fe1-ddc0018583fe" />
 
-To build the library use:
-
-```sh
-npx nx run pkg1:build
-```
-
-To run any task with Nx use:
-
-```sh
-npx nx run <project-name>:<target>
-```
-
-These targets are either [inferred automatically](https://nx.dev/docs/concepts/inferred-tasks?utm_source=nx_project&utm_medium=readme&utm_campaign=nx_projects) or defined in the `project.json` or `package.json` files.
-
-[More about running tasks in the docs &raquo;](https://nx.dev/docs/features/run-tasks?utm_source=nx_project&utm_medium=readme&utm_campaign=nx_projects)
-
-## Versioning and releasing
-
-To version and release the library use
-
-```
-npx nx release
-```
-
-Pass `--dry-run` to see what would happen without actually releasing the library.
-
-[Learn more about Nx release &raquo;](https://nx.dev/docs/features/manage-releases?utm_source=nx_project&utm_medium=readme&utm_campaign=nx_projects)
-
-## Keep TypeScript project references up to date
-
-Nx automatically updates TypeScript [project references](https://www.typescriptlang.org/docs/handbook/project-references.html) in `tsconfig.json` files to ensure they remain accurate based on your project dependencies (`import` or `require` statements). This sync is automatically done when running tasks such as `build` or `typecheck`, which require updated references to function correctly.
-
-To manually trigger the process to sync the project graph dependencies information to the TypeScript project references, run the following command:
-
-```sh
-npx nx sync
-```
-
-You can enforce that the TypeScript project references are always in the correct state when running in CI by adding a step to your CI job configuration that runs the following command:
-
-```sh
-npx nx sync:check
-```
-
-[Learn more about nx sync](https://nx.dev/reference/nx-commands#sync)
-
-## Nx Cloud
-
-Nx Cloud ensures a [fast and scalable CI](https://nx.dev/nx-cloud?utm_source=nx_project&utm_medium=readme&utm_campaign=nx_projects) pipeline. It includes features such as:
-
-- [Remote caching](https://nx.dev/docs/features/ci-features/remote-cache?utm_source=nx_project&utm_medium=readme&utm_campaign=nx_projects)
-- [Task distribution across multiple machines](https://nx.dev/docs/features/ci-features/distribute-task-execution?utm_source=nx_project&utm_medium=readme&utm_campaign=nx_projects)
-- [Automated e2e test splitting](https://nx.dev/docs/features/ci-features/split-e2e-tasks?utm_source=nx_project&utm_medium=readme&utm_campaign=nx_projects)
-- [Task flakiness detection and rerunning](https://nx.dev/docs/features/ci-features/flaky-tasks?utm_source=nx_project&utm_medium=readme&utm_campaign=nx_projects)
-
-### Set up CI (non-Github Actions CI)
-
-**Note:** This is only required if your CI provider is not GitHub Actions.
-
-Use the following command to configure a CI workflow for your workspace:
-
-```sh
-npx nx g ci-workflow
-```
-
-[Learn more about Nx on CI](https://nx.dev/docs/features/ci-features?utm_source=nx_project&utm_medium=readme&utm_campaign=nx_projects)
-
-## Install Nx Console
-
-Nx Console is an editor extension that enriches your developer experience. It lets you run tasks, generate code, and improves code autocompletion in your IDE. It is available for VSCode and IntelliJ.
-
-[Install Nx Console &raquo;](https://nx.dev/docs/getting-started/editor-setup?utm_source=nx_project&utm_medium=readme&utm_campaign=nx_projects)
-
-## 🔗 Learn More
-
-- [Nx Documentation](https://nx.dev/docs)
-- [Crafting Your Workspace Tutorial](https://nx.dev/docs/getting-started/tutorials/crafting-your-workspace)
-- [Module Boundaries](https://nx.dev/docs/features/enforce-module-boundaries)
-- [Releasing Packages](https://nx.dev/docs/features/manage-releases)
-- [Nx Plugins](https://nx.dev/docs/concepts/nx-plugins)
-- [Nx Cloud](https://nx.dev/nx-cloud)
-
-## 💬 Community
-
-Join the Nx community:
-
-- [Discord](https://go.nx.dev/community)
-- [X (Twitter)](https://twitter.com/nxdevtools)
-- [LinkedIn](https://www.linkedin.com/company/nrwl)
-- [YouTube](https://www.youtube.com/@nxdevtools)
-- [Blog](https://nx.dev/blog)
+<img width="1544" height="182" alt="image" src="https://github.com/user-attachments/assets/f837ae73-fffe-487c-b2c9-dd703e66f1c2" />
